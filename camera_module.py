@@ -10,13 +10,13 @@ DST_FILE='lastsmall.jpg'
 
 class Sensor:
     def __init__(self):
-        camera = PiCamera()
-        camera.vflip = True
-        camera.capture(SRC_FILE)
-        camera.capture(DST_FILE)
+        self.camera = PiCamera()
+        self.camera.vflip = True
+        self.camera.capture(SRC_FILE)
+        self.camera.capture(DST_FILE)
 
     def capture_image(self):
-        camera.capture(SRC_FILE)
+        self.camera.capture(SRC_FILE)
         fd_img = open(SRC_FILE, 'r')
         img = Image.open(fd_img)
         size =1024, 720

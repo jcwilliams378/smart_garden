@@ -4,7 +4,7 @@ import time
 class Sensor:
     def __init__(self):
         GPIO.setmode(GPIO.BCM)
-        water_flow_pin = 12
+        water_flow_pin = 25
         GPIO.setup(water_flow_pin, GPIO.IN)
 
         # set up the flow meter
@@ -18,9 +18,10 @@ class Sensor:
         hertz = 0
         flow = 0
         litersflowed = 0
-        
+
     def get_flow(self,t_total):
         t_start = time.time()
+        litersflowed = 0
 
         while time.time() - t_start < t_total:
 
