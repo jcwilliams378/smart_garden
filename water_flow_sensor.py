@@ -2,11 +2,11 @@ import RPi.GPIO as GPIO
 import time
 
 class Sensor:
-    def __init__(self):
+    def __init__(self, PIN_IN = 25):
         GPIO.setmode(GPIO.BCM)
-        water_flow_pin = 25
-        GPIO.setup(water_flow_pin, GPIO.IN)
+        GPIO.setup(PIN_IN, GPIO.IN)
 
+    def get_flow(self,t_total):
         # set up the flow meter
         flowing = False
         lastPinState = False
@@ -19,7 +19,6 @@ class Sensor:
         flow = 0
         litersflowed = 0
 
-    def get_flow(self,t_total):
         t_start = time.time()
         litersflowed = 0
 
