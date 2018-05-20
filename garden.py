@@ -27,66 +27,62 @@ cam = camera_module.Sensor()
 water_flow_sensor = water_flow_sensor.Sensor()
 lux_meter = BH1750FVI_lux_meter.Sensor()
 
-short_cycle_time = 15 # seconds
-long_cycle_time = 30 # seconds
+short_cycle_time = 30 # seconds
+long_cycle_time = 5*60 # seconds
 image_clock = time.time()
 physical_kill_switch = False
 RESET_ESP32 = False
 auto_water_flag = False
 water_timer = 0
-water_limit = 60*2 # units are seconds
+water_limit = 60*10 # units are seconds
 water_flag = False
 valve_status_prev = False
 moisture_threshold = 100
-half_water_dwell_time = 5
+half_water_dwell_time = 10
 lux = 0
 
 i_o_dict = {'ON':GPIO.HIGH,'OFF':GPIO.LOW, True:'ON',False:'OFF'}
 
-f_name = "/mnt/volume/garden_" + time.strftime("%Y-%m-%d %H_%M_%S") + ".csv"
+f_name = "/home/pi/Documents/smart_garden/data/garden_" + time.strftime("%Y-%m-%d %H_%M_%S") + ".csv"
 
 with open(f_name, 'wb') as outcsv:
     writer = csv.writer(outcsv, quoting=csv.QUOTE_ALL)
     writer.writerow(["Time","Air Temp","Soil Temp","Soil Moisture","Light Illuminance","Water Flow","Valve Status"])
 
-def send_to_AIO(stream__name, value):
+def send_to_AIO(stream_name, value):
     try:
-        aio.send(stream__name, value)
+        aio.send(stream_name, value)
     except:
         print("Couldn't send the message, are you over your frequency threshold?")
 
-while(aio.receive('web_kill_switch').value=='ALIVE!' and not physical_kill_switch):
+def receive_from_AIO(stream_name):
+    try:
+        return(aio.receive(stream_name).value)
+    except:
+        print("Couldn't receive the message, are you over your frequency threshold?")
+
+while(receive_from_AIO('web_kill_switch')=='ALIVE!' and not physical_kill_switch):
     loop_start_time = time.time()
 
-    if aio.receive('ESP32_Reset').value == 'RESET':
+    if receive_from_AIO('ESP32_Reset') == 'RESET':
         GPIO.output(ESP32_RESET_PIN_OUT,GPIO.LOW)
         time.sleep(0.3)
         GPIO.output(ESP32_RESET_PIN_OUT,GPIO.HIGH)
 
-    # Get sensor inputs:
-    air_temp = air_temp_sensor.get_TempF()
-
-    if time.time() - image_clock > long_cycle_time:
-        img = cam.capture_image()
-
-        send_to_AIO('camera_feed',img)
-
-        image_clock = time.time()
-
     # see if the soil is dry enough after 9PM to see if the water should be on:
     t_now = datetime.datetime.now()
-    moisture = aio.receive('soil_moisture').value
-    soil_temp = aio.receive('soil_temp').value
-    lux = lux_meter.readLight()
-    send_to_AIO('light_lux',lux)
 
-    if t_now.hour == 21 and t_now.now().minute <= 30 and not auto_water_flag and int(moisture) < moisture_threshold:
+    if t_now.hour == 21 and t_now.now().minute <= 45 and not auto_water_flag and int(moisture) < moisture_threshold:
         auto_water_flag = True
         water_timer = time.time()
     else:
         auto_water_flag = False
 
-    valve_status = aio.receive('water_valve').value=='ON'
+    valve_status = receive_from_AIO('water_valve')=='ON'
+
+    if (time.time() - image_clock > long_cycle_time) and (t_now.hour > 6) and (t_now.hour < 22):
+        cam.save_img()
+        image_clock = time.time()
 
     if valve_status and valve_status!=valve_status_prev:
         water_timer = time.time()
@@ -109,9 +105,17 @@ while(aio.receive('web_kill_switch').value=='ALIVE!' and not physical_kill_switc
         GPIO.output(WATER_VALVE_PIN_OUT,GPIO.HIGH)
         flow = water_flow_sensor.get_flow(1)
 
+    moisture = receive_from_AIO('soil_moisture')
+    soil_temp = receive_from_AIO('soil_temp')
+    air_temp = air_temp_sensor.get_TempF()
+    img = cam.capture_image()
+    lux = lux_meter.readLight()
+
     send_to_AIO('air_temperature',air_temp)
     send_to_AIO('water-flow-l-slash-m',flow)
     send_to_AIO('water_valve',i_o_dict[valve_status])
+    send_to_AIO('camera-feed',img)
+    send_to_AIO('light_lux',lux)
 
     elapsed_time = time.time() - loop_start_time
     print(elapsed_time)
