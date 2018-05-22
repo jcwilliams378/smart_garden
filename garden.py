@@ -5,6 +5,7 @@ import camera_module
 import water_flow_sensor
 import BH1750FVI_lux_meter
 import csv
+from sys import exit
 
 from Adafruit_IO import Client, MQTTClient
 import datetime
@@ -37,9 +38,12 @@ water_timer = 0
 water_limit = 60*10 # units are seconds
 water_flag = False
 valve_status_prev = False
-moisture_threshold = 100
-half_water_dwell_time = 10
+moisture_threshold = 2000
+half_water_dwell_time = 5
 lux = 0
+
+ESP_readings = [0,0,0]
+j = 0
 
 i_o_dict = {'ON':GPIO.HIGH,'OFF':GPIO.LOW, True:'ON',False:'OFF'}
 
@@ -61,13 +65,27 @@ def receive_from_AIO(stream_name):
     except:
         print("Couldn't receive the message, are you over your frequency threshold?")
 
+def ESP_reset():
+    GPIO.output(ESP32_RESET_PIN_OUT,GPIO.LOW)
+    time.sleep(0.4)
+    GPIO.output(ESP32_RESET_PIN_OUT,GPIO.HIGH)
+    send_to_AIO('ESP32_Reset',"RUNNING")
+
+def run_flow():
+    GPIO.output(WATER_VALVE_PIN_OUT,GPIO.LOW)
+    time.sleep(half_water_dwell_time)
+    flow = water_flow_sensor.get_flow(5,2*half_water_dwell_time)
+    time.sleep(half_water_dwell_time)
+    GPIO.output(WATER_VALVE_PIN_OUT,GPIO.HIGH)
+    return(flow)
+
+ESP_reset()
+
 while(receive_from_AIO('web_kill_switch')=='ALIVE!' and not physical_kill_switch):
     loop_start_time = time.time()
 
     if receive_from_AIO('ESP32_Reset') == 'RESET':
-        GPIO.output(ESP32_RESET_PIN_OUT,GPIO.LOW)
-        time.sleep(0.3)
-        GPIO.output(ESP32_RESET_PIN_OUT,GPIO.HIGH)
+        ESP_reset()
 
     # see if the soil is dry enough after 9PM to see if the water should be on:
     t_now = datetime.datetime.now()
@@ -87,46 +105,54 @@ while(receive_from_AIO('web_kill_switch')=='ALIVE!' and not physical_kill_switch
     if valve_status and valve_status!=valve_status_prev:
         water_timer = time.time()
 
-    valve_status_prev = valve_status
-
     #run pump and check flow rate:
     if (auto_water_flag or valve_status) and  time.time() - water_timer < water_limit:
         print("valve is on!")
-        GPIO.output(WATER_VALVE_PIN_OUT,GPIO.LOW)
-        time.sleep(half_water_dwell_time)
-        flow = water_flow_sensor.get_flow(1)
-        time.sleep(half_water_dwell_time)
-
-        GPIO.output(WATER_VALVE_PIN_OUT,GPIO.HIGH)
         valve_status = True
+        flow = run_flow()
+
     else:
         print("valve is off!")
         valve_status = False
         GPIO.output(WATER_VALVE_PIN_OUT,GPIO.HIGH)
-        flow = water_flow_sensor.get_flow(1)
+        flow = water_flow_sensor.get_flow(1,0)
 
     moisture = receive_from_AIO('soil_moisture')
     soil_temp = receive_from_AIO('soil_temp')
+
+    ESP_readings[j] = moisture
+
+    if ESP_readings[1:] == ESP_readings[:-1]:
+        print("last three readings are identical, time to reset ESP32!")
+        ESP_reset()
+
+    j += 1
+    if j == 3:
+        j = 0
+
     air_temp = air_temp_sensor.get_TempF()
     img = cam.capture_image()
     lux = lux_meter.readLight()
 
+    send_to_AIO('water_valve',i_o_dict[valve_status])
     send_to_AIO('air_temperature',air_temp)
     send_to_AIO('water-flow-l-slash-m',flow)
-    send_to_AIO('water_valve',i_o_dict[valve_status])
     send_to_AIO('camera-feed',img)
     send_to_AIO('light_lux',lux)
 
-    elapsed_time = time.time() - loop_start_time
-    print(elapsed_time)
+    valve_status_prev = valve_status
 
     with open(f_name, 'a') as f:
         writer = csv.writer(f)
         writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), str(air_temp), str(soil_temp), str(moisture), str(lux), str(flow), str(i_o_dict[valve_status])])
 
+    elapsed_time = time.time() - loop_start_time
+
     while elapsed_time < short_cycle_time:
         if GPIO.input(PI_RESET_PIN_IN):
-            RESET_ESP32 = True
-            physical_kill_switch = True
+            ESP_reset()
+            exit(0)
         elapsed_time = time.time() - loop_start_time
         time.sleep(0.05)
+
+    print(elapsed_time)
